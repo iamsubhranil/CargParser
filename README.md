@@ -15,12 +15,12 @@ Similarly, `--test` just matches `--test`.
 If `-t` requires a value, if must be specified in
 the format 
 
-    -t=<value>
+    -t <value>
 
 otherwise, it won't match the argument for anything
 else, like
 
-    -tata=<value>, -t2=<value>
+    -tata <value>, -t2 <value>
 
 and mark the whole argument `-t` as absent.
 
@@ -42,3 +42,5 @@ a `-` has to be ignored. I have not decided what will be
 final yet.
 
 For usage information, see `main.c`.
+
+See `cargparser.h` for the API.

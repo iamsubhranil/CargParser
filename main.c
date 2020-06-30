@@ -5,8 +5,8 @@
 int main(int argc, char *argv[]) {
     ArgumentList list = arg_list_create();
 
-    arg_add(list, 't', "test", true, true);
-    arg_add(list, 'b', "bad", true, false);
+    arg_add(list, 't', "test", "Optional argument with value", true, true);
+    arg_add(list, 'b', "bad", "Mandatory argument with value", true, false);
 
     arg_parse(argc, &argv[0], list);
 

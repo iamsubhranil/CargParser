@@ -48,21 +48,23 @@ print(red, RED) print(ylw, YELLOW)
     // them from argument keywords.
 
     typedef struct {
-    char shorthand_char;  // This character is used for both
-                          // parsing a '-' type argument and
-                          // as an identifier of this argument in the list,
-                          // so make sure it is unique.
-    const char *full_string;
-    bool value_required;  // whether this argument requires a value
-    bool is_optional;     // whether this argument is optional
-    bool is_present;      // after parsing, whether this argument is present
-    char *value;          // after parsing, the value given to this argument
+    char shorthand_char;      // This character is used for both
+                              // parsing a '-' type argument and
+                              // as an identifier of this argument in the list,
+                              // so make sure it is unique.
+    const char *full_string;  // string for --option
+    const char *help_string;  // help string to print
+    bool value_required;      // whether this argument requires a value
+    bool is_optional;         // whether this argument is optional
+    bool is_present;          // after parsing, whether this argument is present
+    char *value;              // after parsing, the value given to this argument
 } Argument;
 
 struct ArgumentArray {
     Argument *arguments;
     size_t size;
     bool missing_mandatory;
+    bool has_default_help;
 };
 
 struct ArgumentArray *arg_list_create() {
@@ -71,6 +73,8 @@ struct ArgumentArray *arg_list_create() {
     al->size = 0;
     al->arguments = (Argument *)malloc(sizeof(Argument));
     al->missing_mandatory = false;
+    arg_add(al, 'h', "help", "Shows this help", false, true);
+    al->has_default_help = true;
     return al;
 }
 
@@ -90,14 +94,18 @@ static void arg_add_internal(struct ArgumentArray *arglist, Argument arg) {
 }
 
 void arg_add(struct ArgumentArray *list, const char shorthand, const char *full,
-             bool value_required, bool is_optional) {
+             const char *help, bool value_required, bool is_optional) {
     Argument a;
     a.full_string = strdup(full);
+    a.help_string = strdup(help);
     a.shorthand_char = shorthand;
     a.value_required = value_required;
     a.value = NULL;
     a.is_present = false;
     a.is_optional = is_optional;
+    if (shorthand == 'h') {
+        list->has_default_help = false;
+    }
     arg_add_internal(list, a);
 }
 
@@ -201,15 +209,52 @@ void arg_parse(int argc, char **argv, struct ArgumentArray *list) {
             arg_highlight(argc, argv, i, 0, len, false);
         }
     }
+    bool silentError = false;
+    // print default help if needed to
+    if (list->has_default_help && arg_is_present(list, 'h')) {
+        arg_print_default_help(list, argv);
+        silentError = true;
+    }
     // check if all mandatory arguments are present
     for (size_t i = 0; i < list->size; i++) {
         if (list->arguments[i].is_optional == false &&
             list->arguments[i].is_present == false) {
-            perr("Missing mandatory argument '-%c'/'--%s'!",
-                 list->arguments[i].shorthand_char,
-                 list->arguments[i].full_string);
+            if (!silentError) {
+                perr("Missing mandatory argument '-%c'/'--%s'!",
+                     list->arguments[i].shorthand_char,
+                     list->arguments[i].full_string);
+            }
             list->missing_mandatory = true;
         }
+    }
+}
+
+void arg_print_default_help(struct ArgumentArray *list, char **argv) {
+    printf("Usage: %s ", argv[0]);
+    for (size_t i = 0; i < list->size; i++) {
+        Argument a = list->arguments[i];
+        if (a.is_optional) {
+            printf("[ ");
+        }
+        printf("-%c/--%s", a.shorthand_char, a.full_string);
+        if (a.value_required) {
+            printf(" <value>");
+        }
+        if (a.is_optional) {
+            printf(" ]");
+        }
+        printf(" ");
+    }
+    printf("\n\nDetails: \n");
+    for (size_t i = 0; i < list->size; i++) {
+        Argument a = list->arguments[i];
+        printf("\t-%c/--%s", a.shorthand_char, a.full_string);
+        if (a.value_required) {
+            printf(" <value>");
+        } else {
+            printf("        ");
+        }
+        printf("\t\t%s\n", a.help_string);
     }
 }
 
@@ -232,6 +277,7 @@ char *arg_value(struct ArgumentArray *list, const char shorthand) {
 void arg_free(struct ArgumentArray *l) {
     for (size_t i = 0; i < l->size; i++) {
         free((void *)l->arguments[i].full_string);
+        free((void *)l->arguments[i].help_string);
     }
     free(l->arguments);
     free(l);

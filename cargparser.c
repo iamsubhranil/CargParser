@@ -57,6 +57,7 @@ print(red, RED) print(ylw, YELLOW)
     bool value_required;      // whether this argument requires a value
     bool is_optional;         // whether this argument is optional
     bool is_present;          // after parsing, whether this argument is present
+    bool is_positional;       // denotes whether this is a positional argument
     char *value;              // after parsing, the value given to this argument
 } Argument;
 
@@ -71,7 +72,7 @@ struct ArgumentArray *arg_list_create() {
     struct ArgumentArray *al =
         (struct ArgumentArray *)malloc(sizeof(struct ArgumentArray));
     al->size = 0;
-    al->arguments = (Argument *)malloc(sizeof(Argument));
+    al->arguments = NULL;
     al->missing_mandatory = false;
     arg_add(al, 'h', "help", "Shows this help", false, true);
     al->has_default_help = true;
@@ -93,8 +94,9 @@ static void arg_add_internal(struct ArgumentArray *arglist, Argument arg) {
     arglist->size++;
 }
 
-void arg_add(struct ArgumentArray *list, const char shorthand, const char *full,
-             const char *help, bool value_required, bool is_optional) {
+void arg_add2(struct ArgumentArray *list, const char shorthand,
+              const char *full, const char *help, bool value_required,
+              bool is_optional, bool is_positional) {
     Argument a;
     a.full_string = strdup(full);
     a.help_string = strdup(help);
@@ -103,30 +105,68 @@ void arg_add(struct ArgumentArray *list, const char shorthand, const char *full,
     a.value = NULL;
     a.is_present = false;
     a.is_optional = is_optional;
+    a.is_positional = is_positional;
     if (shorthand == 'h') {
         list->has_default_help = false;
     }
     arg_add_internal(list, a);
 }
 
-static Argument *get_shorthand_argument(struct ArgumentArray l, const char *arg,
-                                        size_t len) {
-    // strictly only allow "-option"
-    if (len < 2) return NULL;
-    if (len > 2) return NULL;
-    for (size_t i = 0; i < l.size; i++) {
-        if (l.arguments[i].shorthand_char == arg[1]) return &(l.arguments[i]);
+void arg_add(struct ArgumentArray *list, const char shorthand, const char *full,
+             const char *help, bool value_required, bool is_optional) {
+    arg_add2(list, shorthand, full, help, value_required, is_optional, false);
+}
+void arg_add_positional(struct ArgumentArray *list, const char shorthand,
+                        const char *full, const char *help, bool is_optional) {
+    arg_add2(list, shorthand, full, help, true, is_optional, true);
+}
+
+static Argument *get_argument(struct ArgumentArray *l, char c) {
+    for (size_t i = 0; i < l->size; i++) {
+        if (l->arguments[i].shorthand_char == c) return &(l->arguments[i]);
     }
     return NULL;
 }
 
-static Argument *get_full_argument(struct ArgumentArray l, const char *str,
+static Argument *get_shorthand_argument(struct ArgumentArray *l,
+                                        const char *arg, size_t len) {
+    // strictly only allow "-option"
+    if (len < 2) return NULL;
+    if (len > 2) return NULL;
+    for (size_t i = 0; i < l->size; i++) {
+        if (l->arguments[i].is_positional == false &&
+            l->arguments[i].shorthand_char == arg[1])
+            return &(l->arguments[i]);
+    }
+    return NULL;
+}
+
+static Argument *get_full_argument(struct ArgumentArray *l, const char *str,
                                    size_t len) {
     if (len < 3) return NULL;
-    for (size_t i = 0; i < l.size; i++) {
-        if (strcmp(l.arguments[i].full_string, &str[2]) == 0)
-            return &(l.arguments[i]);
+    for (size_t i = 0; i < l->size; i++) {
+        if (l->arguments[i].is_positional == false &&
+            strcmp(l->arguments[i].full_string, &str[2]) == 0)
+            return &(l->arguments[i]);
     }
+    return NULL;
+}
+
+static Argument *get_next_positional(struct ArgumentArray *l) {
+    // return the first non optional argument, if available
+    for (size_t i = 0; i < l->size; i++) {
+        if (l->arguments[i].is_positional == true &&
+            l->arguments[i].is_optional == false &&
+            l->arguments[i].is_present == false)
+            return &(l->arguments[i]);
+    }
+    // return first optional argument, if available
+    for (size_t i = 0; i < l->size; i++) {
+        if (l->arguments[i].is_positional == true &&
+            l->arguments[i].is_present == false)
+            return &(l->arguments[i]);
+    }
+    // no more positional arguments available
     return NULL;
 }
 
@@ -153,7 +193,7 @@ static void arg_highlight(int argc, char **argv, int pointer, int from, int to,
 }
 
 static void parse_argument(int argc, char **argv, Argument *arg, int *i,
-                           size_t len, size_t minlen) {
+                           size_t len, size_t minlen, bool is_positional) {
     if (len < minlen) {
         perr("Too short argument");
         arg_highlight(argc, argv, *i, 0, len, true);
@@ -176,14 +216,19 @@ static void parse_argument(int argc, char **argv, Argument *arg, int *i,
         arg->is_present = true;
         return;
     }
-    if (*i == argc - 1) {
-        perr("Expected value for argument '%s'", argv[*i]);
-        arg_highlight(argc, argv, *i, 0, len, true);
-        return;
+    if (!is_positional) {
+        if (*i == argc - 1) {
+            perr("Expected value for argument '%s'", argv[*i]);
+            arg_highlight(argc, argv, *i, 0, len, true);
+            return;
+        }
+        arg->value = argv[*i + 1];
+        arg->is_present = true;
+        (*i)++;
+    } else {
+        arg->value = argv[*i];
+        arg->is_present = true;
     }
-    arg->value = argv[*i + 1];
-    arg->is_present = true;
-    (*i)++;
 }
 
 void arg_parse(int argc, char **argv, struct ArgumentArray *list) {
@@ -198,15 +243,15 @@ void arg_parse(int argc, char **argv, struct ArgumentArray *list) {
             }
             if (argv[i][1] == '-')
                 parse_argument(argc, argv,
-                               get_full_argument(*list, argv[i], len), &i, len,
-                               3);
+                               get_full_argument(list, argv[i], len), &i, len,
+                               3, false);
             else
                 parse_argument(argc, argv,
-                               get_shorthand_argument(*list, argv[i], len), &i,
-                               len, 2);
+                               get_shorthand_argument(list, argv[i], len), &i,
+                               len, 2, false);
         } else {
-            pwarn("Ignoring unknown argument");
-            arg_highlight(argc, argv, i, 0, len, false);
+            parse_argument(argc, argv, get_next_positional(list), &i, len, 0,
+                           true);
         }
     }
     bool silentError = false;
@@ -220,36 +265,59 @@ void arg_parse(int argc, char **argv, struct ArgumentArray *list) {
         if (list->arguments[i].is_optional == false &&
             list->arguments[i].is_present == false) {
             if (!silentError) {
-                perr("Missing mandatory argument '-%c'/'--%s'!",
-                     list->arguments[i].shorthand_char,
-                     list->arguments[i].full_string);
+                if (list->arguments[i].is_positional) {
+                    perr("Missing mandatory argument '%s'!",
+                         list->arguments[i].full_string);
+                } else {
+                    perr("Missing mandatory argument '-%c'/'--%s'!",
+                         list->arguments[i].shorthand_char,
+                         list->arguments[i].full_string);
+                }
             }
             list->missing_mandatory = true;
         }
     }
 }
 
+static void arg_print_arg(Argument a) {
+    if (a.is_optional) {
+        printf("[ ");
+    }
+    if (a.is_positional) {
+        printf("%s", a.full_string);
+    } else {
+        printf("-%c/--%s", a.shorthand_char, a.full_string);
+    }
+    if (!a.is_positional && a.value_required) {
+        printf(" <value>");
+    }
+    if (a.is_optional) {
+        printf(" ]");
+    }
+    printf(" ");
+}
+
 void arg_print_default_help(struct ArgumentArray *list, char **argv) {
     printf("Usage: %s ", argv[0]);
+    // print all optional positional values in the end
     for (size_t i = 0; i < list->size; i++) {
         Argument a = list->arguments[i];
-        if (a.is_optional) {
-            printf("[ ");
-        }
-        printf("-%c/--%s", a.shorthand_char, a.full_string);
-        if (a.value_required) {
-            printf(" <value>");
-        }
-        if (a.is_optional) {
-            printf(" ]");
-        }
-        printf(" ");
+        if (a.is_positional && a.is_optional) continue;
+        arg_print_arg(a);
+    }
+    for (size_t i = 0; i < list->size; i++) {
+        Argument a = list->arguments[i];
+        if (a.is_positional && a.is_optional) arg_print_arg(a);
     }
     printf("\n\nDetails: \n");
     for (size_t i = 0; i < list->size; i++) {
         Argument a = list->arguments[i];
-        printf("\t-%c/--%s", a.shorthand_char, a.full_string);
-        if (a.value_required) {
+        if (a.is_positional) {
+            printf("\t%s", a.full_string);
+        } else {
+            printf("\t-%c/--%s", a.shorthand_char, a.full_string);
+        }
+        if (!a.is_positional && a.value_required) {
             printf(" <value>");
         } else {
             printf("        ");
@@ -259,18 +327,12 @@ void arg_print_default_help(struct ArgumentArray *list, char **argv) {
 }
 
 bool arg_is_present(struct ArgumentArray *list, const char shorthand) {
-    char arg[2];
-    arg[0] = '-';
-    arg[1] = shorthand;
-    Argument *a = get_shorthand_argument(*list, arg, 2);
+    Argument *a = get_argument(list, shorthand);
     return a != NULL && a->is_present;
 }
 
 char *arg_value(struct ArgumentArray *list, const char shorthand) {
-    char arg[2];
-    arg[0] = '-';
-    arg[1] = shorthand;
-    Argument *a = get_shorthand_argument(*list, arg, 2);
+    Argument *a = get_argument(list, shorthand);
     return a == NULL ? NULL : a->value;
 }
 

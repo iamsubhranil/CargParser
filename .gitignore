@@ -2,3 +2,7 @@
 build/
 .gdb_history
 vgcore.*
+*.o
+*.exe
+cargparser
+.depend

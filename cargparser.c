@@ -344,3 +344,7 @@ void arg_free(struct ArgumentArray *l) {
     free(l->arguments);
     free(l);
 }
+
+bool arg_missing_mandatory(struct ArgumentArray *a) {
+    return a->missing_mandatory;
+}

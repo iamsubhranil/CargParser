@@ -1,5 +1,9 @@
 #pragma once
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #include <stdbool.h>
 #include <stdlib.h>
 
@@ -56,3 +60,7 @@ void arg_print_default_help(ArgumentList list, char** argv);
 
 // frees the argument list
 void arg_free(ArgumentList list);
+
+#ifdef __cplusplus
+}  // extern "C"
+#endif
